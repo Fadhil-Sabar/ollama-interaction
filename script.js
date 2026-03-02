@@ -6,6 +6,7 @@ $(document).ready(function () {
   const $themeToggle = $("#theme-toggle");
   const $modelSelect = $("#model-select");
   const $sendBtn = $("#send-btn");
+  const $stopBtn = $("#stop-btn");
   const $chatList = $("#chat-list");
   const $newChatBtn = $("#new-chat-btn");
   const $sidebar = $("#sidebar");
@@ -23,6 +24,7 @@ $(document).ready(function () {
   let chats = JSON.parse(localStorage.getItem("ollama_chats")) || [];
   let currentChatId = localStorage.getItem("ollama_current_chat_id") || null;
   let activeContext = []; // Stores objects like { type: 'file'|'link', name: string, content: string }
+  let currentAbortController = null;
 
   // --- Initialization ---
   init();
@@ -34,6 +36,14 @@ $(document).ready(function () {
     }
     fetchModels();
     checkTheme();
+    configureMarked();
+  }
+
+  function configureMarked() {
+    marked.setOptions({
+      breaks: true,
+      gfm: true,
+    });
   }
 
   // --- Model Fetching ---
@@ -235,9 +245,42 @@ $(document).ready(function () {
         `;
 
     $chatArea.append(messageHtml);
+    const $newMsg = $(`#${id}`);
+    if (!isUser) {
+      processMessageContent($newMsg.find(".prose-custom"));
+    }
     $chatArea.scrollTop($chatArea[0].scrollHeight);
     return id;
   }
+
+  function processMessageContent($container) {
+    // 1. Highlight Code Blocks
+    $container.find("pre code").each(function () {
+      if (!$(this).data("highlighted")) {
+        hljs.highlightElement(this);
+        $(this).data("highlighted", "true");
+
+        // 2. Prepend Copy Button to parent PRE
+        const $pre = $(this).parent("pre");
+        if ($pre.find(".copy-btn").length === 0) {
+          $pre.append('<button class="copy-btn">COPY</button>');
+        }
+      }
+    });
+  }
+
+  $chatArea.on("click", ".copy-btn", function () {
+    const $btn = $(this);
+    const $code = $btn.siblings("code");
+    const text = $code.text();
+
+    navigator.clipboard.writeText(text).then(() => {
+      $btn.text("COPIED!").addClass("copied");
+      setTimeout(() => {
+        $btn.text("COPY").removeClass("copied");
+      }, 2000);
+    });
+  });
 
   // --- Theme Control ---
   $themeToggle.on("click", function () {
@@ -274,7 +317,7 @@ $(document).ready(function () {
 
     $welcomeScreen.hide();
     appendMessageUI(rawMessage, true);
-    $userInput.val("");
+    $userInput.val("").css("height", "auto"); // Reset height after send
 
     // --- CONTEXT CONSTRUCTION ---
 
@@ -324,10 +367,17 @@ $(document).ready(function () {
     const $botMsgContainer = $(`#${botMsgId} .prose-custom`);
     let fullResponse = "";
 
+    // Toggle stop button visibility
+    $sendBtn.hide();
+    $stopBtn.removeClass("hidden").show();
+
+    currentAbortController = new AbortController();
+
     try {
       const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: currentAbortController.signal,
         body: JSON.stringify({
           model: selectedModel,
           system:
@@ -355,6 +405,7 @@ $(document).ready(function () {
             if (json.response) {
               fullResponse += json.response;
               $botMsgContainer.html(marked.parse(fullResponse));
+              processMessageContent($botMsgContainer);
               $chatArea.scrollTop($chatArea[0].scrollHeight);
             }
             // Save the context tokens for next turn
@@ -371,12 +422,21 @@ $(document).ready(function () {
       // Note: We no longer clear activeContext here.
       // It stays "Pinned" until the user clicks 'x' on the chip.
     } catch (error) {
-      $botMsgContainer.html(
-        "<span class='text-red-500 text-xs'>(Sync Error: Engine Not Responding)</span>",
-      );
+      if (error.name === "AbortError") {
+        $botMsgContainer.html(
+          marked.parse(fullResponse + "\n\n*(Execution halted by user)*"),
+        );
+        processMessageContent($botMsgContainer);
+      } else {
+        $botMsgContainer.html(
+          "<span class='text-red-500 text-xs'>(Sync Error: Engine Not Responding)</span>",
+        );
+      }
     } finally {
       $userInput.prop("disabled", false).focus();
-      $sendBtn.prop("disabled", false).removeClass("opacity-50");
+      $sendBtn.show().prop("disabled", false).removeClass("opacity-50");
+      $stopBtn.hide();
+      currentAbortController = null;
     }
   });
 
@@ -392,4 +452,23 @@ $(document).ready(function () {
 
   $openSidebar.on("click", () => $sidebar.removeClass("-translate-x-full"));
   $closeSidebar.on("click", () => $sidebar.addClass("-translate-x-full"));
+
+  $stopBtn.on("click", function () {
+    if (currentAbortController) {
+      currentAbortController.abort();
+    }
+  });
+
+  // --- Multi-line Input Handling ---
+  $userInput.on("input", function () {
+    this.style.height = "auto";
+    this.style.height = this.scrollHeight + "px";
+  });
+
+  $userInput.on("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      $chatForm.submit();
+    }
+  });
 });

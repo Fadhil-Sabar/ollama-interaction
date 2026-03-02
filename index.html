@@ -6,7 +6,7 @@
     <title>Chat Minimal</title>
     <!-- Inter Font from Google -->
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap"
       rel="stylesheet"
     />
     <!-- Tailwind CSS CDN -->
@@ -16,6 +16,9 @@
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <!-- Marked -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Highlight.js -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   </head>
   <body
     class="bg-zinc-100 dark:bg-zinc-950 min-h-screen text-zinc-900 dark:text-zinc-100 transition-colors duration-200"
@@ -152,13 +155,13 @@
                                 </svg>
                             </button>
 
-                            <input 
-                                type="text" 
+                            <textarea 
                                 id="user-input" 
                                 placeholder="Message engine or paste a link..." 
-                                class="flex-1 bg-transparent px-2 py-4 text-sm font-medium outline-none"
+                                class="flex-1 bg-transparent px-2 py-4 text-sm font-medium outline-none resize-none overflow-hidden"
+                                rows="1"
                                 autocomplete="off"
-                            >
+                            ></textarea>
 
                             <button 
                                 type="submit" 
@@ -166,6 +169,14 @@
                                 class="mr-2 bg-zinc-900 dark:bg-zinc-50 text-white dark:text-zinc-950 text-[0.6rem] font-black uppercase tracking-widest px-5 py-3 rounded-xl hover:opacity-90 active:scale-95 transition-all"
                             >
                                 Execute
+                            </button>
+
+                            <button 
+                                type="button" 
+                                id="stop-btn" 
+                                class="hidden mr-2 bg-red-600 text-white text-[0.6rem] font-black uppercase tracking-widest px-5 py-3 rounded-xl hover:bg-red-700 active:scale-95 transition-all"
+                            >
+                                Stop
                             </button>
                         </div>
                     </form>
