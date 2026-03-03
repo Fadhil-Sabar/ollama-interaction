@@ -255,33 +255,84 @@ $(document).ready(function () {
 
   function appendMessageUI(text, isUser = false, isHtml = false) {
     const id = "msg-" + Date.now() + Math.random().toString(36).substr(2, 9);
-    const content = isUser ? text : isHtml ? text : marked.parse(text);
+
+    // Determine initial content
+    let content = "";
+    if (isUser) {
+      content = text;
+    } else if (isHtml) {
+      content = text;
+    } else {
+      const result = formatThinkResponse(text);
+      content = typeof result === "string" ? result : result.html;
+    }
 
     const messageHtml = `
             <div id="${id}" class="message-bubble w-full ${isUser ? "user-msg" : "bot-msg"}">
                 <div class="content-box">
                     <div class="prose-custom max-w-none">${content}</div>
+                    <div class="status-indicator-zone"></div>
                 </div>
                 ${!isUser ? "" : `<div class="mt-2 text-[10px] text-zinc-400 font-bold uppercase tracking-widest px-1 opacity-60 italic">Personal Transmission</div>`}
             </div>
         `;
 
     $chatArea.append(messageHtml);
-    const $newMsg = $(`#${id}`);
+
+    // Post-processing
     if (!isUser) {
+      const $newMsg = $(`#${id}`);
       const $container = $newMsg.find(".prose-custom");
-      const rawText = isHtml ? text : text; // text is already formatted if isHtml
-      if (!isHtml) {
-        $container.html(formatThinkResponse(text));
-      }
       processMessageContent($container);
     }
+
     $chatArea.scrollTop($chatArea[0].scrollHeight);
     return id;
   }
 
-  function formatThinkResponse(text, nativeThinking = "") {
-    if (!text.includes("<think>") && !nativeThinking) return marked.parse(text);
+  function safeMarkedParse(text, isStreaming = false) {
+    if (!isStreaming)
+      return { html: marked.parse(text), isGeneratingCode: false };
+
+    // Detect unclosed backticks
+    const parts = text.split("```");
+    if (parts.length % 2 === 0) {
+      // Odd number of ``` means parts.length is even
+      // Extract language if possible
+      const lastPart = parts[parts.length - 1];
+      const langMatch = lastPart.match(/^([a-zA-Z0-9#+.-]*)/);
+      const language =
+        langMatch && langMatch[1] ? langMatch[1].toUpperCase() : "CODE";
+
+      const readyToRender = parts.slice(0, -1).join("```");
+      return {
+        html: marked.parse(readyToRender),
+        isGeneratingCode: true,
+        language: language,
+      };
+    }
+    return { html: marked.parse(text), isGeneratingCode: false };
+  }
+
+  function formatThinkResponse(text, nativeThinking = "", isStreaming = false) {
+    const parse = (t) => safeMarkedParse(t, isStreaming);
+
+    let isGeneratingCode = false;
+    let codeLanguage = "";
+
+    const processPart = (t) => {
+      const result = parse(t);
+      if (result.isGeneratingCode) {
+        isGeneratingCode = true;
+        codeLanguage = result.language;
+      }
+      return result.html;
+    };
+
+    if (!text.includes("<think>") && !nativeThinking) {
+      const res = parse(text);
+      return isStreaming ? res : res.html;
+    }
 
     let html = "";
 
@@ -293,7 +344,7 @@ $(document).ready(function () {
                     <div class="thinking-dot-mini"></div>
                     <span>Thinking...</span>
                 </div>
-                <div class="thought-content">${marked.parse(nativeThinking)}</div>
+                <div class="thought-content">${processPart(nativeThinking)}</div>
             </div>
         `;
     }
@@ -307,7 +358,7 @@ $(document).ready(function () {
     while ((match = thinkRegex.exec(text)) !== null) {
       // 1. Content BEFORE <think>
       const before = text.substring(currentPos, match.index);
-      if (before.trim()) html += marked.parse(before);
+      if (before.trim()) html += processPart(before);
 
       // 2. The Thought Block
       const thoughtContent = match[1];
@@ -319,7 +370,7 @@ $(document).ready(function () {
                         ${isUnclosed ? '<div class="thinking-dot-mini"></div>' : '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>'}
                         <span>${isUnclosed ? "Thinking..." : "Thought Process"}</span>
                     </div>
-                    <div class="thought-content">${marked.parse(thoughtContent)}</div>
+                    <div class="thought-content">${processPart(thoughtContent)}</div>
                 </div>
             `;
 
@@ -328,8 +379,11 @@ $(document).ready(function () {
 
     // 3. Content AFTER the last closed <think> tag
     const after = text.substring(currentPos);
-    if (after.trim()) html += marked.parse(after);
+    if (after.trim()) html += processPart(after);
 
+    if (isStreaming) {
+      return { html, isGeneratingCode, language: codeLanguage };
+    }
     return html;
   }
 
@@ -486,9 +540,97 @@ $(document).ready(function () {
       // Remove the early clearing of $botMsgContainer.html("");
       // It will be replaced naturally when the first chunk of fullResponse arrives.
 
+      let wordsSinceLastUpdate = 0;
+      const wordThreshold = 10;
+
+      // Smoothing state
+      let displayedResponse = "";
+      let displayedThinking = "";
+      let animationFrameId = null;
+
+      const smoothUpdate = () => {
+        let hasNewContent = false;
+
+        // Catch up thinking
+        if (
+          displayedThinking.length < (window.currentNativeThinking || "").length
+        ) {
+          const syncSpeed = Math.ceil(
+            ((window.currentNativeThinking || "").length -
+              displayedThinking.length) /
+              5,
+          );
+          displayedThinking += (window.currentNativeThinking || "").substring(
+            displayedThinking.length,
+            displayedThinking.length + syncSpeed,
+          );
+          hasNewContent = true;
+        }
+
+        // Catch up response
+        if (displayedResponse.length < fullResponse.length) {
+          // If we are way behind, speed up (catch up faster)
+          const diff = fullResponse.length - displayedResponse.length;
+          const syncSpeed = Math.ceil(diff / 4);
+          displayedResponse += fullResponse.substring(
+            displayedResponse.length,
+            displayedResponse.length + syncSpeed,
+          );
+          hasNewContent = true;
+        }
+
+        if (hasNewContent) {
+          const result = formatThinkResponse(
+            displayedResponse,
+            displayedThinking,
+            true,
+          );
+          $botMsgContainer.html(result.html);
+
+          // Handle persistent indicator
+          const $indicatorZone = $botMsgContainer.siblings(
+            ".status-indicator-zone",
+          );
+          if (result.isGeneratingCode) {
+            if ($indicatorZone.children().length === 0) {
+              $indicatorZone.html(
+                `<div class="code-generating-indicator"><div class="spinner"></div><span>Generating ${result.language}...</span><div class="cursor"></div></div>`,
+              );
+            } else {
+              $indicatorZone
+                .find("span")
+                .text(`Generating ${result.language}...`);
+            }
+          } else {
+            $indicatorZone.empty();
+          }
+
+          $chatArea.scrollTop($chatArea[0].scrollHeight);
+        }
+
+        animationFrameId = requestAnimationFrame(smoothUpdate);
+      };
+
+      // Start the smoothing loop
+      animationFrameId = requestAnimationFrame(smoothUpdate);
+
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+
+        if (done) {
+          cancelAnimationFrame(animationFrameId);
+          // Final sync
+          $botMsgContainer.html(
+            formatThinkResponse(
+              fullResponse,
+              window.currentNativeThinking || "",
+              false,
+            ),
+          );
+          processMessageContent($botMsgContainer);
+          $chatArea.scrollTop($chatArea[0].scrollHeight);
+          break;
+        }
 
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split("\n");
@@ -498,38 +640,19 @@ $(document).ready(function () {
           try {
             const json = JSON.parse(line);
 
-            // Handle both legacy "response" and new "thinking" fields
-            let hasChanged = false;
-
             if (json.thinking) {
-              // Append to fullResponse but wrap in <think> tags if not already there
-              // Actually, better to keep a separate tracker for native thinking
               if (!window.currentNativeThinking)
                 window.currentNativeThinking = "";
               window.currentNativeThinking += json.thinking;
-              hasChanged = true;
             }
 
             if (json.response) {
               fullResponse += json.response;
-              hasChanged = true;
             }
 
-            if (hasChanged) {
-              $botMsgContainer.html(
-                formatThinkResponse(
-                  fullResponse,
-                  window.currentNativeThinking || "",
-                ),
-              );
-              processMessageContent($botMsgContainer);
-              $chatArea.scrollTop($chatArea[0].scrollHeight);
-            }
-
-            // Save the context tokens for next turn
             if (json.done) {
               chat.context = json.context;
-              window.currentNativeThinking = ""; // Clear for next request
+              window.currentNativeThinking = "";
             }
           } catch (e) {}
         }
@@ -562,6 +685,7 @@ $(document).ready(function () {
       $sendBtn.show().prop("disabled", false).removeClass("opacity-50");
       $stopBtn.hide();
       currentAbortController = null;
+      window.currentNativeThinking = ""; // Reset for next interaction
     }
   });
 
