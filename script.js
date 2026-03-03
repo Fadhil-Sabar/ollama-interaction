@@ -476,6 +476,11 @@ $(document).ready(function () {
         }),
       });
 
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP Error ${response.status}`);
+      }
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       // Remove the early clearing of $botMsgContainer.html("");
@@ -546,7 +551,10 @@ $(document).ready(function () {
         processMessageContent($botMsgContainer);
       } else {
         $botMsgContainer.html(
-          "<span class='text-red-500 text-xs'>(Sync Error: Engine Not Responding)</span>",
+          `<div class="flex flex-col gap-2 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+            <span class="text-xs font-black uppercase tracking-widest text-red-500">Sync Error</span>
+            <p class="text-sm font-medium text-red-600 dark:text-red-400">${error.message || "Engine Not Responding"}</p>
+          </div>`,
         );
       }
     } finally {
