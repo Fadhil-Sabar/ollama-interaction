@@ -111,6 +111,21 @@
           </div>
 
           <div class="flex items-center gap-4">
+            <!-- Thinking Config -->
+            <div id="thinking-config" class="hidden flex items-center gap-3 bg-zinc-50 dark:bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800">
+               <div class="flex items-center gap-2">
+                 <label for="think-toggle" class="text-[0.6rem] font-bold uppercase tracking-wider opacity-50 cursor-pointer">Think</label>
+                 <input type="checkbox" id="think-toggle" class="w-3 h-3 accent-zinc-900 dark:accent-zinc-100 cursor-pointer">
+               </div>
+               <div class="w-[1px] h-3 bg-zinc-200 dark:bg-zinc-800"></div>
+               <select id="think-level" class="bg-transparent text-[0.6rem] font-bold uppercase tracking-wider outline-none cursor-pointer">
+                 <option value="true">Enable</option>
+                 <option value="low">Low</option>
+                 <option value="medium">Medium</option>
+                 <option value="high">High</option>
+               </select>
+            </div>
+
             <div class="hidden sm:block">
               <select id="model-select" class="text-xs"></select>
             </div>

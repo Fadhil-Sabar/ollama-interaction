@@ -5,6 +5,9 @@ $(document).ready(function () {
   const $userInput = $("#user-input");
   const $themeToggle = $("#theme-toggle");
   const $modelSelect = $("#model-select");
+  const $thinkConfig = $("#thinking-config");
+  const $thinkToggle = $("#think-toggle");
+  const $thinkLevel = $("#think-level");
   const $sendBtn = $("#send-btn");
   const $stopBtn = $("#stop-btn");
   const $chatList = $("#chat-list");
@@ -25,6 +28,13 @@ $(document).ready(function () {
   let currentChatId = localStorage.getItem("ollama_current_chat_id") || null;
   let activeContext = []; // Stores objects like { type: 'file'|'link', name: string, content: string }
   let currentAbortController = null;
+  let thinkModels = [
+    "qwen3",
+    "qwen3.5",
+    "deepseek-r1",
+    "deepseek-v3.1",
+    "gpt-oss",
+  ];
 
   // --- Initialization ---
   init();
@@ -63,10 +73,22 @@ $(document).ready(function () {
       } else {
         $modelSelect.append('<option value="">No Models</option>');
       }
+      updateThinkUIVisibility();
     } catch (error) {
       $modelSelect.empty().append('<option value="">Offline</option>');
     }
   }
+
+  function updateThinkUIVisibility() {
+    const model = $modelSelect.val() || "";
+    const isThinkModel = thinkModels.some((m) =>
+      model.toLowerCase().includes(m),
+    );
+    if (isThinkModel) $thinkConfig.removeClass("hidden").addClass("flex");
+    else $thinkConfig.addClass("hidden").removeClass("flex");
+  }
+
+  $modelSelect.on("change", updateThinkUIVisibility);
 
   // --- Context Managers (RAG & Link Analysis) ---
   $attachBtn.on("click", () => $fileUpload.click());
@@ -379,6 +401,13 @@ $(document).ready(function () {
 
     // --- CONTEXT CONSTRUCTION ---
 
+    // Determine 'think' value
+    let thinkValue = false;
+    if ($thinkToggle.is(":checked")) {
+      const level = $thinkLevel.val();
+      thinkValue = level === "true" ? true : level;
+    }
+
     // 1. Get Pinned Context (Files/Links)
     let pinnedContextText = "";
     if (activeContext.length > 0) {
@@ -442,6 +471,7 @@ $(document).ready(function () {
           system:
             "You are a professional AI assistant. Use the provided DOCUMENT context to provide a detailed, accurate, and structured response. Break down complex information into bullet points if helpful. If the answer is not in the documents, clarify that and use your general knowledge to assist. Aim for clarity and depth.",
           prompt: finalPrompt,
+          think: thinkValue,
           stream: true,
         }),
       });
