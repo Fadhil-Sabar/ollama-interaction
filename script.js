@@ -231,9 +231,9 @@ $(document).ready(function () {
     renameChat($(this).data("id"));
   });
 
-  function appendMessageUI(text, isUser = false, animate = true) {
+  function appendMessageUI(text, isUser = false, isHtml = false) {
     const id = "msg-" + Date.now() + Math.random().toString(36).substr(2, 9);
-    const content = isUser ? text : marked.parse(text);
+    const content = isUser ? text : isHtml ? text : marked.parse(text);
 
     const messageHtml = `
             <div id="${id}" class="message-bubble w-full ${isUser ? "user-msg" : "bot-msg"}">
@@ -247,10 +247,68 @@ $(document).ready(function () {
     $chatArea.append(messageHtml);
     const $newMsg = $(`#${id}`);
     if (!isUser) {
-      processMessageContent($newMsg.find(".prose-custom"));
+      const $container = $newMsg.find(".prose-custom");
+      const rawText = isHtml ? text : text; // text is already formatted if isHtml
+      if (!isHtml) {
+        $container.html(formatThinkResponse(text));
+      }
+      processMessageContent($container);
     }
     $chatArea.scrollTop($chatArea[0].scrollHeight);
     return id;
+  }
+
+  function formatThinkResponse(text, nativeThinking = "") {
+    if (!text.includes("<think>") && !nativeThinking) return marked.parse(text);
+
+    let html = "";
+
+    // 1. Handle native thinking field from Ollama API
+    if (nativeThinking) {
+      html += `
+            <div class="thought-block is-thinking">
+                <div class="thought-header">
+                    <div class="thinking-dot-mini"></div>
+                    <span>Thinking...</span>
+                </div>
+                <div class="thought-content">${marked.parse(nativeThinking)}</div>
+            </div>
+        `;
+    }
+
+    let currentPos = 0;
+
+    // Regex to match <think> blocks (including unclosed ones at the end)
+    const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/g;
+    let match;
+
+    while ((match = thinkRegex.exec(text)) !== null) {
+      // 1. Content BEFORE <think>
+      const before = text.substring(currentPos, match.index);
+      if (before.trim()) html += marked.parse(before);
+
+      // 2. The Thought Block
+      const thoughtContent = match[1];
+      const isUnclosed = !match[0].endsWith("</think>");
+
+      html += `
+                <div class="thought-block ${isUnclosed ? "is-thinking" : ""}">
+                    <div class="thought-header">
+                        ${isUnclosed ? '<div class="thinking-dot-mini"></div>' : '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>'}
+                        <span>${isUnclosed ? "Thinking..." : "Thought Process"}</span>
+                    </div>
+                    <div class="thought-content">${marked.parse(thoughtContent)}</div>
+                </div>
+            `;
+
+      currentPos = thinkRegex.lastIndex;
+    }
+
+    // 3. Content AFTER the last closed <think> tag
+    const after = text.substring(currentPos);
+    if (after.trim()) html += marked.parse(after);
+
+    return html;
   }
 
   function processMessageContent($container) {
@@ -363,6 +421,7 @@ $(document).ready(function () {
     const botMsgId = appendMessageUI(
       '<div class="thinking-container"><div class="dot dot-1"></div><div class="dot dot-2"></div><div class="dot dot-3"></div></div>',
       false,
+      true,
     );
     const $botMsgContainer = $(`#${botMsgId} .prose-custom`);
     let fullResponse = "";
@@ -389,7 +448,8 @@ $(document).ready(function () {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      $botMsgContainer.html("");
+      // Remove the early clearing of $botMsgContainer.html("");
+      // It will be replaced naturally when the first chunk of fullResponse arrives.
 
       while (true) {
         const { done, value } = await reader.read();
@@ -402,15 +462,39 @@ $(document).ready(function () {
           if (!line.trim()) continue;
           try {
             const json = JSON.parse(line);
+
+            // Handle both legacy "response" and new "thinking" fields
+            let hasChanged = false;
+
+            if (json.thinking) {
+              // Append to fullResponse but wrap in <think> tags if not already there
+              // Actually, better to keep a separate tracker for native thinking
+              if (!window.currentNativeThinking)
+                window.currentNativeThinking = "";
+              window.currentNativeThinking += json.thinking;
+              hasChanged = true;
+            }
+
             if (json.response) {
               fullResponse += json.response;
-              $botMsgContainer.html(marked.parse(fullResponse));
+              hasChanged = true;
+            }
+
+            if (hasChanged) {
+              $botMsgContainer.html(
+                formatThinkResponse(
+                  fullResponse,
+                  window.currentNativeThinking || "",
+                ),
+              );
               processMessageContent($botMsgContainer);
               $chatArea.scrollTop($chatArea[0].scrollHeight);
             }
+
             // Save the context tokens for next turn
             if (json.done) {
               chat.context = json.context;
+              window.currentNativeThinking = ""; // Clear for next request
             }
           } catch (e) {}
         }
@@ -424,7 +508,10 @@ $(document).ready(function () {
     } catch (error) {
       if (error.name === "AbortError") {
         $botMsgContainer.html(
-          marked.parse(fullResponse + "\n\n*(Execution halted by user)*"),
+          formatThinkResponse(
+            fullResponse + "\n\n*(Execution halted by user)*",
+            window.currentNativeThinking || "",
+          ),
         );
         processMessageContent($botMsgContainer);
       } else {
