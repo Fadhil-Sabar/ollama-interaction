@@ -462,33 +462,34 @@ $(document).ready(function () {
       thinkValue = level === "true" ? true : level;
     }
 
-    // 1. Get Pinned Context (Files/Links)
-    let pinnedContextText = "";
-    if (activeContext.length > 0) {
-      pinnedContextText = "### PRIMARY KNOWLEDGE SOURCE (PINNED):\n";
-      activeContext.forEach((ctx) => {
-        pinnedContextText += `DOCUMENT [${ctx.name}]: ${ctx.content}\n\n`;
-      });
-    }
+    // 1. Construct messages array for /api/chat
+    const messages = [];
 
-    // 2. Get Last 5 Chat Bubbles (The Limit)
-    const historyLimit = 5;
+    // System Prompt (Keep it brief for better model following)
+    const systemPrompt = "You are a professional AI assistant. Don't use emoji. Aim for clarity and depth. If a document is provided, use it as your primary source.";
+    messages.push({ role: "system", content: systemPrompt });
+
+    // 2. Add Recent History (Last 10 messages)
+    const historyLimit = 10;
     const recentHistory = chat.messages.slice(-historyLimit);
-    let historyText = "";
-    if (recentHistory.length > 0) {
-      historyText = "### RECENT CONVERSATION HISTORY (LAST 5):\n";
-      recentHistory.forEach((m) => {
-        historyText += `${m.isUser ? "USER" : "ASSISTANT"}: ${m.text}\n`;
+    recentHistory.forEach((m) => {
+      messages.push({ role: m.isUser ? "user" : "assistant", content: m.text });
+    });
+
+    // 3. Construct the current User Message with Context (RAG Pattern)
+    let userMessageWithContext = "";
+    if (activeContext.length > 0) {
+      userMessageWithContext += "### PRIMARY KNOWLEDGE SOURCE (PINNED):\n";
+      activeContext.forEach((ctx) => {
+        userMessageWithContext += `DOCUMENT [${ctx.name}]: ${ctx.content}\n\n`;
       });
+      userMessageWithContext += "### INSTRUCTION:\nBased on the documents above, please answer the following question. If the answer isn't in the docs, use your general knowledge but mention that.\n\n";
     }
+    
+    userMessageWithContext += `### USER QUESTION:\n${rawMessage}`;
+    messages.push({ role: "user", content: userMessageWithContext });
 
-    // 3. Final Formatted Prompt (Structured for clarity)
-    let finalPrompt = "";
-    if (pinnedContextText) finalPrompt += `${pinnedContextText}\n`;
-    if (historyText) finalPrompt += `${historyText}\n`;
-    finalPrompt += `### USER QUESTION:\n${rawMessage}`;
-
-    // Update local logs
+    // Update local logs (only store the raw message for history)
     chat.messages.push({ text: rawMessage, isUser: true });
 
     if (chat.title === "Untitled") {
@@ -508,25 +509,29 @@ $(document).ready(function () {
     );
     const $botMsgContainer = $(`#${botMsgId} .prose-custom`);
     let fullResponse = "";
+    let localNativeThinking = "";
 
     // Toggle stop button visibility
     $sendBtn.hide();
     $stopBtn.removeClass("hidden").show();
 
     currentAbortController = new AbortController();
+    let animationFrameId = null;
 
     try {
-      const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+      const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: currentAbortController.signal,
         body: JSON.stringify({
           model: selectedModel,
-          system:
-            "You are a professional AI assistant. Use the provided DOCUMENT context to provide a detailed, accurate, and structured response. Break down complex information into bullet points if helpful. If the answer is not in the documents, clarify that and use your general knowledge to assist. Aim for clarity and depth.",
-          prompt: finalPrompt,
+          messages: messages,
           think: thinkValue,
           stream: true,
+          options: {
+            temperature: 0.5,
+            num_ctx: 4096 // Adjust based on model capabilities
+          }
         }),
       });
 
@@ -537,30 +542,22 @@ $(document).ready(function () {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      // Remove the early clearing of $botMsgContainer.html("");
-      // It will be replaced naturally when the first chunk of fullResponse arrives.
-
-      let wordsSinceLastUpdate = 0;
-      const wordThreshold = 10;
 
       // Smoothing state
       let displayedResponse = "";
       let displayedThinking = "";
-      let animationFrameId = null;
 
       const smoothUpdate = () => {
         let hasNewContent = false;
 
+        // Check if user is at the bottom before updating content (with 50px threshold)
+        const threshold = 50;
+        const isAtBottom = $chatArea[0].scrollHeight - $chatArea.scrollTop() - $chatArea.outerHeight() < threshold;
+
         // Catch up thinking
-        if (
-          displayedThinking.length < (window.currentNativeThinking || "").length
-        ) {
-          const syncSpeed = Math.ceil(
-            ((window.currentNativeThinking || "").length -
-              displayedThinking.length) /
-              5,
-          );
-          displayedThinking += (window.currentNativeThinking || "").substring(
+        if (displayedThinking.length < localNativeThinking.length) {
+          const syncSpeed = Math.ceil((localNativeThinking.length - displayedThinking.length) / 5);
+          displayedThinking += localNativeThinking.substring(
             displayedThinking.length,
             displayedThinking.length + syncSpeed,
           );
@@ -569,7 +566,6 @@ $(document).ready(function () {
 
         // Catch up response
         if (displayedResponse.length < fullResponse.length) {
-          // If we are way behind, speed up (catch up faster)
           const diff = fullResponse.length - displayedResponse.length;
           const syncSpeed = Math.ceil(diff / 4);
           displayedResponse += fullResponse.substring(
@@ -580,32 +576,27 @@ $(document).ready(function () {
         }
 
         if (hasNewContent) {
-          const result = formatThinkResponse(
-            displayedResponse,
-            displayedThinking,
-            true,
-          );
+          const result = formatThinkResponse(displayedResponse, displayedThinking, true);
           $botMsgContainer.html(result.html);
 
           // Handle persistent indicator
-          const $indicatorZone = $botMsgContainer.siblings(
-            ".status-indicator-zone",
-          );
+          const $indicatorZone = $botMsgContainer.siblings(".status-indicator-zone");
           if (result.isGeneratingCode) {
             if ($indicatorZone.children().length === 0) {
               $indicatorZone.html(
                 `<div class="code-generating-indicator"><div class="spinner"></div><span>Generating ${result.language}...</span><div class="cursor"></div></div>`,
               );
             } else {
-              $indicatorZone
-                .find("span")
-                .text(`Generating ${result.language}...`);
+              $indicatorZone.find("span").text(`Generating ${result.language}...`);
             }
           } else {
             $indicatorZone.empty();
           }
 
-          $chatArea.scrollTop($chatArea[0].scrollHeight);
+          // Only scroll if the user was already at the bottom
+          if (isAtBottom) {
+            $chatArea.scrollTop($chatArea[0].scrollHeight);
+          }
         }
 
         animationFrameId = requestAnimationFrame(smoothUpdate);
@@ -617,20 +608,7 @@ $(document).ready(function () {
       while (true) {
         const { done, value } = await reader.read();
 
-        if (done) {
-          cancelAnimationFrame(animationFrameId);
-          // Final sync
-          $botMsgContainer.html(
-            formatThinkResponse(
-              fullResponse,
-              window.currentNativeThinking || "",
-              false,
-            ),
-          );
-          processMessageContent($botMsgContainer);
-          $chatArea.scrollTop($chatArea[0].scrollHeight);
-          break;
-        }
+        if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split("\n");
@@ -640,35 +618,45 @@ $(document).ready(function () {
           try {
             const json = JSON.parse(line);
 
-            if (json.thinking) {
-              if (!window.currentNativeThinking)
-                window.currentNativeThinking = "";
-              window.currentNativeThinking += json.thinking;
+            if (json.message) {
+              if (json.message.content) {
+                fullResponse += json.message.content;
+              }
+              // Handle potential thinking field in chat API (model dependent)
+              if (json.message.thinking) {
+                localNativeThinking += json.message.thinking;
+              }
             }
-
-            if (json.response) {
-              fullResponse += json.response;
+            
+            // Ollama sometimes sends thinking outside message object in some versions/models
+            if (json.thinking) {
+              localNativeThinking += json.thinking;
             }
 
             if (json.done) {
-              chat.context = json.context;
-              window.currentNativeThinking = "";
+              chat.context = json.context; // Note: context is returned in /api/chat too in some versions
             }
           } catch (e) {}
         }
       }
 
+      // Final Sync
+      cancelAnimationFrame(animationFrameId);
+      $botMsgContainer.html(formatThinkResponse(fullResponse, localNativeThinking, false));
+      processMessageContent($botMsgContainer);
+      $chatArea.scrollTop($chatArea[0].scrollHeight);
+
       chat.messages.push({ text: fullResponse, isUser: false });
       saveChats();
 
-      // Note: We no longer clear activeContext here.
-      // It stays "Pinned" until the user clicks 'x' on the chip.
     } catch (error) {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      
       if (error.name === "AbortError") {
         $botMsgContainer.html(
           formatThinkResponse(
             fullResponse + "\n\n*(Execution halted by user)*",
-            window.currentNativeThinking || "",
+            localNativeThinking,
           ),
         );
         processMessageContent($botMsgContainer);
@@ -681,11 +669,11 @@ $(document).ready(function () {
         );
       }
     } finally {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
       $userInput.prop("disabled", false).focus();
       $sendBtn.show().prop("disabled", false).removeClass("opacity-50");
       $stopBtn.hide();
       currentAbortController = null;
-      window.currentNativeThinking = ""; // Reset for next interaction
     }
   });
 

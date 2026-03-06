@@ -25,7 +25,8 @@ This project provides a clean, "Zen" style interface for Ollama. It focuses on p
 - **Pinned Context**: Attached files/links stay active (pinned) for multiple questions until manually removed.
 
 ### 3. Smart Memory Control
-- **Sliding Window**: The system only sends the **last 5 chat bubbles** to Ollama. This prevents memory bloat, increases response speed, and maintains focus.
+- **Sliding Window**: The system sends the **last 10 chat bubbles** to Ollama using the `/api/chat` endpoint. This maintains better conversation context while preventing memory bloat.
+- **Smart Auto-Scroll**: Intelligent scroll management that only anchors to the bottom if the user is already there, allowing uninterrupted reading of previous messages during generation.
 - **Token Independent**: Memory is managed via text-based history rather than Ollama context tokens for precise control.
 
 ### 4. Chat Management
