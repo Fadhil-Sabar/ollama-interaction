@@ -19,12 +19,13 @@ This project provides a clean, "Zen" style interface for Ollama. It focuses on p
 - **Responsive**: Sidebar for history, adaptive container for chat.
 - **Modes**: Full support for System-aware Light and Dark modes.
 
-### 2. Advanced Context Management (RAG)
+### 2. Advanced Context Management (RAG) & Tools
 - **Local File RAG**: Users can attach `.txt`, `.md`, or code files. Content is read client-side and injected into the prompt.
-- **Link Analysis**: Pasting a URL triggers an automatic analysis via Jina Reader, allowing the AI to "read" live web pages.
+- **Link Analysis (Tool Calling)**: Integrated with Ollama's `tools` API. The model can autonomously decide to call `process_link` via Jina Reader (`r.jina.ai`) to fetch live web content when relevant to the user's query.
 - **Pinned Context**: Attached files/links stay active (pinned) for multiple questions until manually removed.
 
-### 3. Smart Memory Control
+### 3. Smart Memory & Tool Loop
+- **Autonomous Execution**: A specialized "Tool Loop" in the frontend handles multi-turn interactions, allowing the model to request data, receive it, and then formulate a final response.
 - **Sliding Window**: The system sends the **last 10 chat bubbles** to Ollama using the `/api/chat` endpoint. This maintains better conversation context while preventing memory bloat.
 - **Smart Auto-Scroll**: Intelligent scroll management that only anchors to the bottom if the user is already there, allowing uninterrupted reading of previous messages during generation.
 - **Token Independent**: Memory is managed via text-based history rather than Ollama context tokens for precise control.
@@ -45,4 +46,4 @@ This project provides a clean, "Zen" style interface for Ollama. It focuses on p
 - **Prompt Engineering**: The prompt structure is hierarchical: 1. Pinned Knowledge, 2. Last 5 Chats, 3. New Instruction.
 
 ---
-*Documented on March 2026*
+*Documented on April 2026*

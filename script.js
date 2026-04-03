@@ -21,6 +21,17 @@ $(document).ready(function () {
   const $attachBtn = $("#attach-btn");
   const $contextPreview = $("#context-preview");
 
+  // New Elements
+  const $settingsBtn = $("#settings-btn");
+  const $settingsModal = $("#settings-modal");
+  const $closeSettings = $("#close-settings");
+  const $saveSettings = $("#save-settings");
+  const $tempInput = $("#temp-input");
+  const $ctxInput = $("#ctx-input");
+  const $topPInput = $("#top-p-input");
+  const $topKInput = $("#top-k-input");
+  const $showMetricsToggle = $("#show-metrics-toggle");
+
   const OLLAMA_BASE_URL = "http://localhost:11434";
 
   // --- State ---
@@ -36,6 +47,15 @@ $(document).ready(function () {
     "gpt-oss",
   ];
 
+  // Config State
+  let showMetrics = localStorage.getItem("ollama_show_metrics") === "true";
+  let configParams = JSON.parse(localStorage.getItem("ollama_config_params")) || {
+    temperature: 0.7,
+    num_ctx: 16384,
+    top_p: 0.9,
+    top_k: 40
+  };
+
   // --- Initialization ---
   init();
 
@@ -47,6 +67,7 @@ $(document).ready(function () {
     fetchModels();
     checkTheme();
     configureMarked();
+    loadConfigToInputs();
   }
 
   function configureMarked() {
@@ -107,7 +128,6 @@ $(document).ready(function () {
   });
 
   async function processLink(url) {
-    // Option 3: Jina Reader Integration
     const jinaUrl = `https://r.jina.ai/${url}`;
     try {
       const response = await fetch(jinaUrl);
@@ -119,10 +139,22 @@ $(document).ready(function () {
     }
   }
 
-  function addContext(type, name, content) {
-    // Prevent duplicate links
-    if (activeContext.some((c) => c.name === name)) return;
+  async function fetchLinkContent(url) {
+    const jinaUrl = `https://r.jina.ai/${url}`;
+    try {
+      const response = await fetch(jinaUrl, {
+        headers: { "X-No-Cache": "true" }
+      });
+      if (!response.ok) throw new Error("Failed to fetch link content");
+      return await response.text();
+    } catch (error) {
+      console.error("Link analysis failed:", error);
+      return `Error: Could not analyze the link ${url}.`;
+    }
+  }
 
+  function addContext(type, name, content) {
+    if (activeContext.some((c) => c.name === name)) return;
     activeContext.push({ type, name, content });
     renderContextChips();
   }
@@ -158,15 +190,12 @@ $(document).ready(function () {
       title: "Untitled",
       messages: [],
       timestamp: Date.now(),
-      context: [], // Initialize empty tokens for memory
+      context: [], 
     };
     chats.unshift(newChat);
     saveChats();
-
-    // Clear active context when starting fresh
     activeContext = [];
     renderContextChips();
-
     renderChatList();
     loadChat(id);
   }
@@ -176,23 +205,18 @@ $(document).ready(function () {
     localStorage.setItem("ollama_current_chat_id", id);
     const chat = chats.find((c) => c.id === id);
     if (!chat) return;
-
-    // Clear UI and Global state context to prevent data leakage from other chats
     activeContext = [];
     renderContextChips();
-
     $currentChatTitle.text(chat.title);
     $chatArea.find(".message-bubble").remove();
-
     if (chat.messages.length === 0) {
       $welcomeScreen.show();
     } else {
       $welcomeScreen.hide();
       chat.messages.forEach((msg) => {
-        appendMessageUI(msg.text, msg.isUser, false);
+        appendMessageUI(msg.text, msg.isUser, false, msg.metrics);
       });
     }
-
     $(".chat-item").removeClass("active");
     $(`.chat-item[data-id="${id}"]`).addClass("active");
     $chatArea.scrollTop($chatArea[0].scrollHeight);
@@ -219,7 +243,6 @@ $(document).ready(function () {
     });
   }
 
-  // --- Actions ---
   function deleteChat(id) {
     if (confirm("Delete this thread permanently?")) {
       chats = chats.filter((c) => c.id !== id);
@@ -253,10 +276,8 @@ $(document).ready(function () {
     renameChat($(this).data("id"));
   });
 
-  function appendMessageUI(text, isUser = false, isHtml = false) {
+  function appendMessageUI(text, isUser = false, isHtml = false, metrics = null) {
     const id = "msg-" + Date.now() + Math.random().toString(36).substr(2, 9);
-
-    // Determine initial content
     let content = "";
     if (isUser) {
       content = text;
@@ -272,38 +293,67 @@ $(document).ready(function () {
                 <div class="content-box">
                     <div class="prose-custom max-w-none">${content}</div>
                     <div class="status-indicator-zone"></div>
+                    <div class="metrics-zone"></div>
                 </div>
                 ${!isUser ? "" : `<div class="mt-2 text-[10px] text-zinc-400 font-bold uppercase tracking-widest px-1 opacity-60 italic">Personal Transmission</div>`}
             </div>
         `;
 
     $chatArea.append(messageHtml);
-
-    // Post-processing
+    const $newMsg = $(`#${id}`);
     if (!isUser) {
-      const $newMsg = $(`#${id}`);
       const $container = $newMsg.find(".prose-custom");
       processMessageContent($container);
+      if (metrics) {
+        renderMetricsUI($newMsg.find(".metrics-zone"), metrics);
+      }
     }
-
     $chatArea.scrollTop($chatArea[0].scrollHeight);
     return id;
+  }
+
+  function renderMetricsUI($container, metrics) {
+    if (!showMetrics || !metrics || !metrics.total_duration) return;
+    
+    const totalSec = (metrics.total_duration / 1e9).toFixed(2);
+    const loadSec = (metrics.load_duration / 1e9).toFixed(2);
+    const promptEvalSec = (metrics.prompt_eval_duration / 1e9).toFixed(2);
+    const evalSec = (metrics.eval_duration / 1e9).toFixed(2);
+    const tps = (metrics.eval_count / (metrics.eval_duration / 1e9)).toFixed(1);
+
+    const metricsHtml = `
+      <div class="mt-6 pt-4 border-t border-zinc-100 dark:border-zinc-800/50 flex flex-wrap gap-y-2 gap-x-6 items-center animate-in fade-in slide-in-from-top-2 duration-500">
+        <div class="flex items-center gap-2">
+          <span class="text-[0.55rem] font-black uppercase tracking-widest text-zinc-400">Speed</span>
+          <span class="text-[0.65rem] font-bold text-zinc-900 dark:text-zinc-100">${tps} tokens/s</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-[0.55rem] font-black uppercase tracking-widest text-zinc-400">Tokens</span>
+          <span class="text-[0.6rem] font-medium text-zinc-500 dark:text-zinc-400">
+            <b class="text-zinc-700 dark:text-zinc-200">${metrics.prompt_eval_count}</b> in / 
+            <b class="text-zinc-700 dark:text-zinc-200">${metrics.eval_count}</b> out
+          </span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-[0.55rem] font-black uppercase tracking-widest text-zinc-400">Duration</span>
+          <span class="text-[0.6rem] font-medium text-zinc-500 dark:text-zinc-400" title="Load: ${loadSec}s | Prompt: ${promptEvalSec}s | Eval: ${evalSec}s">
+            Total <b class="text-zinc-700 dark:text-zinc-200">${totalSec}s</b>
+          </span>
+        </div>
+      </div>
+    `;
+    $container.html(metricsHtml);
   }
 
   function safeMarkedParse(text, isStreaming = false) {
     if (!isStreaming)
       return { html: marked.parse(text), isGeneratingCode: false };
-
-    // Detect unclosed backticks
     const parts = text.split("```");
     if (parts.length % 2 === 0) {
-      // Odd number of ``` means parts.length is even
-      // Extract language if possible
       const lastPart = parts[parts.length - 1];
       const langMatch = lastPart.match(/^([a-zA-Z0-9#+.-]*)/);
       const language =
         langMatch && langMatch[1] ? langMatch[1].toUpperCase() : "CODE";
-
       const readyToRender = parts.slice(0, -1).join("```");
       return {
         html: marked.parse(readyToRender),
@@ -316,10 +366,8 @@ $(document).ready(function () {
 
   function formatThinkResponse(text, nativeThinking = "", isStreaming = false) {
     const parse = (t) => safeMarkedParse(t, isStreaming);
-
     let isGeneratingCode = false;
     let codeLanguage = "";
-
     const processPart = (t) => {
       const result = parse(t);
       if (result.isGeneratingCode) {
@@ -328,15 +376,11 @@ $(document).ready(function () {
       }
       return result.html;
     };
-
     if (!text.includes("<think>") && !nativeThinking) {
       const res = parse(text);
       return isStreaming ? res : res.html;
     }
-
     let html = "";
-
-    // 1. Handle native thinking field from Ollama API
     if (nativeThinking) {
       html += `
             <div class="thought-block is-thinking">
@@ -348,22 +392,14 @@ $(document).ready(function () {
             </div>
         `;
     }
-
     let currentPos = 0;
-
-    // Regex to match <think> blocks (including unclosed ones at the end)
     const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/g;
     let match;
-
     while ((match = thinkRegex.exec(text)) !== null) {
-      // 1. Content BEFORE <think>
       const before = text.substring(currentPos, match.index);
       if (before.trim()) html += processPart(before);
-
-      // 2. The Thought Block
       const thoughtContent = match[1];
       const isUnclosed = !match[0].endsWith("</think>");
-
       html += `
                 <div class="thought-block ${isUnclosed ? "is-thinking" : ""}">
                     <div class="thought-header">
@@ -373,14 +409,10 @@ $(document).ready(function () {
                     <div class="thought-content">${processPart(thoughtContent)}</div>
                 </div>
             `;
-
       currentPos = thinkRegex.lastIndex;
     }
-
-    // 3. Content AFTER the last closed <think> tag
     const after = text.substring(currentPos);
     if (after.trim()) html += processPart(after);
-
     if (isStreaming) {
       return { html, isGeneratingCode, language: codeLanguage };
     }
@@ -388,13 +420,10 @@ $(document).ready(function () {
   }
 
   function processMessageContent($container) {
-    // 1. Highlight Code Blocks
     $container.find("pre code").each(function () {
       if (!$(this).data("highlighted")) {
         hljs.highlightElement(this);
         $(this).data("highlighted", "true");
-
-        // 2. Prepend Copy Button to parent PRE
         const $pre = $(this).parent("pre");
         if ($pre.find(".copy-btn").length === 0) {
           $pre.append('<button class="copy-btn">COPY</button>');
@@ -407,7 +436,6 @@ $(document).ready(function () {
     const $btn = $(this);
     const $code = $btn.siblings("code");
     const text = $code.text();
-
     navigator.clipboard.writeText(text).then(() => {
       $btn.text("COPIED!").addClass("copied");
       setTimeout(() => {
@@ -431,76 +459,108 @@ $(document).ready(function () {
     if (isDark) $("html").addClass("dark");
   }
 
+  function loadConfigToInputs() {
+    $tempInput.val(configParams.temperature);
+    $ctxInput.val(configParams.num_ctx);
+    $topPInput.val(configParams.top_p);
+    $topKInput.val(configParams.top_k);
+    $showMetricsToggle.prop("checked", showMetrics);
+  }
+
+  // --- UI Event Handlers ---
+  $settingsBtn.on("click", () => $settingsModal.removeClass("hidden").addClass("flex"));
+  $closeSettings.on("click", () => $settingsModal.addClass("hidden").removeClass("flex"));
+
+  $saveSettings.on("click", () => {
+    showMetrics = $showMetricsToggle.is(":checked");
+    configParams = {
+      temperature: parseFloat($tempInput.val()),
+      num_ctx: parseInt($ctxInput.val()),
+      top_p: parseFloat($topPInput.val()),
+      top_k: parseInt($topKInput.val())
+    };
+    localStorage.setItem("ollama_show_metrics", showMetrics);
+    localStorage.setItem("ollama_config_params", JSON.stringify(configParams));
+    if (currentChatId) loadChat(currentChatId);
+    $settingsModal.addClass("hidden").removeClass("flex");
+  });
+
+  $settingsModal.on("click", function(e) {
+    if (e.target === this) $(this).addClass("hidden").removeClass("flex");
+  });
+
   // --- Main Logics ---
   $chatForm.on("submit", async function (e) {
     e.preventDefault();
     const rawMessage = $userInput.val().trim();
     const selectedModel = $modelSelect.val();
-
     if (!rawMessage || !selectedModel) return;
-
-    // Auto-detect URL for Jina Reader
     const urlMatch = rawMessage.match(/https?:\/\/[^\s]+/);
     if (urlMatch && activeContext.length === 0) {
       const url = urlMatch[0];
       await processLink(url);
     }
-
     if (!currentChatId) createNewChat();
     const chat = chats.find((c) => c.id === currentChatId);
-
     $welcomeScreen.hide();
     appendMessageUI(rawMessage, true);
-    $userInput.val("").css("height", "auto"); // Reset height after send
-
-    // --- CONTEXT CONSTRUCTION ---
-
-    // Determine 'think' value
+    $userInput.val("").css("height", "auto");
     let thinkValue = false;
     if ($thinkToggle.is(":checked")) {
       const level = $thinkLevel.val();
       thinkValue = level === "true" ? true : level;
     }
-
-    // 1. Construct messages array for /api/chat
     const messages = [];
-
-    // System Prompt (Keep it brief for better model following)
     const systemPrompt = "You are a professional AI assistant. Don't use emoji. Aim for clarity and depth. If a document is provided, use it as your primary source.";
     messages.push({ role: "system", content: systemPrompt });
-
-    // 2. Add Recent History (Last 10 messages)
     const historyLimit = 10;
     const recentHistory = chat.messages.slice(-historyLimit);
     recentHistory.forEach((m) => {
       messages.push({ role: m.isUser ? "user" : "assistant", content: m.text });
     });
-
-    // 3. Construct the current User Message with Context (RAG Pattern)
     let userMessageWithContext = "";
+    let hasContext = false;
     if (activeContext.length > 0) {
+      hasContext = true;
       userMessageWithContext += "### PRIMARY KNOWLEDGE SOURCE (PINNED):\n";
       activeContext.forEach((ctx) => {
         userMessageWithContext += `DOCUMENT [${ctx.name}]: ${ctx.content}\n\n`;
       });
-      userMessageWithContext += "### INSTRUCTION:\nBased on the documents above, please answer the following question. If the answer isn't in the docs, use your general knowledge but mention that.\n\n";
     }
-    
+    if (hasContext) {
+        userMessageWithContext += "### INSTRUCTION:\nBased on the provided documents, answer the following question. If the information isn't present, use your general knowledge but clearly state so.\n\n";
+    }
     userMessageWithContext += `### USER QUESTION:\n${rawMessage}`;
     messages.push({ role: "user", content: userMessageWithContext });
-
-    // Update local logs (only store the raw message for history)
     chat.messages.push({ text: rawMessage, isUser: true });
-
     if (chat.title === "Untitled") {
       chat.title = rawMessage.substring(0, 30);
       $currentChatTitle.text(chat.title);
       renderChatList();
     }
-
     saveChats();
     $userInput.prop("disabled", true);
     $sendBtn.prop("disabled", true).addClass("opacity-50");
+
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "process_link",
+          description: "Fetch and process content from a URL to get its information",
+          parameters: {
+            type: "object",
+            properties: {
+              url: {
+                type: "string",
+                description: "The URL to fetch content from"
+              }
+            },
+            required: ["url"]
+          }
+        }
+      }
+    ];
 
     const botMsgId = appendMessageUI(
       '<div class="thinking-container"><div class="dot dot-1"></div><div class="dot dot-2"></div><div class="dot dot-3"></div></div>',
@@ -510,51 +570,20 @@ $(document).ready(function () {
     const $botMsgContainer = $(`#${botMsgId} .prose-custom`);
     let fullResponse = "";
     let localNativeThinking = "";
-
-    // Toggle stop button visibility
+    let finalMetrics = null;
     $sendBtn.hide();
     $stopBtn.removeClass("hidden").show();
-
     currentAbortController = new AbortController();
     let animationFrameId = null;
-
+    
     try {
-      const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: currentAbortController.signal,
-        body: JSON.stringify({
-          model: selectedModel,
-          messages: messages,
-          think: thinkValue,
-          stream: true,
-          options: {
-            temperature: 0.5,
-            num_ctx: 4096 // Adjust based on model capabilities
-          }
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP Error ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      // Smoothing state
       let displayedResponse = "";
       let displayedThinking = "";
 
       const smoothUpdate = () => {
         let hasNewContent = false;
-
-        // Check if user is at the bottom before updating content (with 50px threshold)
         const threshold = 50;
         const isAtBottom = $chatArea[0].scrollHeight - $chatArea.scrollTop() - $chatArea.outerHeight() < threshold;
-
-        // Catch up thinking
         if (displayedThinking.length < localNativeThinking.length) {
           const syncSpeed = Math.ceil((localNativeThinking.length - displayedThinking.length) / 5);
           displayedThinking += localNativeThinking.substring(
@@ -563,8 +592,6 @@ $(document).ready(function () {
           );
           hasNewContent = true;
         }
-
-        // Catch up response
         if (displayedResponse.length < fullResponse.length) {
           const diff = fullResponse.length - displayedResponse.length;
           const syncSpeed = Math.ceil(diff / 4);
@@ -574,12 +601,9 @@ $(document).ready(function () {
           );
           hasNewContent = true;
         }
-
         if (hasNewContent) {
           const result = formatThinkResponse(displayedResponse, displayedThinking, true);
           $botMsgContainer.html(result.html);
-
-          // Handle persistent indicator
           const $indicatorZone = $botMsgContainer.siblings(".status-indicator-zone");
           if (result.isGeneratingCode) {
             if ($indicatorZone.children().length === 0) {
@@ -592,66 +616,135 @@ $(document).ready(function () {
           } else {
             $indicatorZone.empty();
           }
-
-          // Only scroll if the user was already at the bottom
           if (isAtBottom) {
             $chatArea.scrollTop($chatArea[0].scrollHeight);
           }
         }
-
         animationFrameId = requestAnimationFrame(smoothUpdate);
       };
-
-      // Start the smoothing loop
+      
       animationFrameId = requestAnimationFrame(smoothUpdate);
 
-      while (true) {
-        const { done, value } = await reader.read();
+      let isLooping = true;
+      while (isLooping) {
+        let toolCallsInPass = [];
+        const response = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: currentAbortController.signal,
+          body: JSON.stringify({
+            model: selectedModel,
+            messages: messages,
+            tools: tools,
+            think: thinkValue,
+            stream: true,
+            options: {
+              temperature: configParams.temperature,
+              num_ctx: configParams.num_ctx,
+              top_p: configParams.top_p,
+              top_k: configParams.top_k
+            }
+          }),
+        });
 
-        if (done) break;
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `HTTP Error ${response.status}`);
+        }
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
 
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const json = JSON.parse(line);
-
-            if (json.message) {
-              if (json.message.content) {
-                fullResponse += json.message.content;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const json = JSON.parse(line);
+              if (json.message) {
+                if (json.message.content) {
+                  fullResponse += json.message.content;
+                }
+                if (json.message.thinking) {
+                  localNativeThinking += json.message.thinking;
+                }
+                if (json.message.tool_calls) {
+                  toolCallsInPass.push(...json.message.tool_calls);
+                }
               }
-              // Handle potential thinking field in chat API (model dependent)
-              if (json.message.thinking) {
-                localNativeThinking += json.message.thinking;
+              if (json.thinking) {
+                localNativeThinking += json.thinking;
               }
-            }
-            
-            // Ollama sometimes sends thinking outside message object in some versions/models
-            if (json.thinking) {
-              localNativeThinking += json.thinking;
-            }
+              if (json.done) {
+                chat.context = json.context;
+                if (json.total_duration) {
+                  finalMetrics = {
+                    total_duration: json.total_duration,
+                    load_duration: json.load_duration,
+                    prompt_eval_duration: json.prompt_eval_duration,
+                    eval_duration: json.eval_duration,
+                    eval_count: json.eval_count,
+                    prompt_eval_count: json.prompt_eval_count
+                  };
+                }
+              }
+            } catch (e) {}
+          }
+        }
 
-            if (json.done) {
-              chat.context = json.context; // Note: context is returned in /api/chat too in some versions
+        if (toolCallsInPass.length > 0) {
+          // Assistant message with tool calls
+          messages.push({
+            role: "assistant",
+            content: fullResponse,
+            tool_calls: toolCallsInPass
+          });
+
+          // Execute tools
+          for (const tc of toolCallsInPass) {
+            if (tc.function.name === "process_link") {
+              const url = tc.function.arguments.url;
+              // UI indication
+              const $indicatorZone = $botMsgContainer.siblings(".status-indicator-zone");
+              $indicatorZone.html(
+                `<div class="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 py-2"><div class="spinner-mini"></div><span>Executing tool: process_link(${url})</span></div>`
+              );
+
+              const content = await fetchLinkContent(url);
+              messages.push({
+                role: "tool",
+                content: content
+              });
+              // Also add to visual context chips for user feedback
+              addContext("link", url, content);
             }
-          } catch (e) {}
+          }
+          
+          // Reset for next pass but keep UI state
+          fullResponse = "";
+          localNativeThinking = "";
+          displayedResponse = "";
+          displayedThinking = "";
+          // Loop again
+        } else {
+          isLooping = false;
         }
       }
 
-      // Final Sync
       cancelAnimationFrame(animationFrameId);
       $botMsgContainer.html(formatThinkResponse(fullResponse, localNativeThinking, false));
+      if (finalMetrics) {
+        renderMetricsUI($botMsgContainer.siblings(".metrics-zone"), finalMetrics);
+      }
       processMessageContent($botMsgContainer);
       $chatArea.scrollTop($chatArea[0].scrollHeight);
-
-      chat.messages.push({ text: fullResponse, isUser: false });
+      chat.messages.push({ text: fullResponse, isUser: false, metrics: finalMetrics });
       saveChats();
-
     } catch (error) {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      
       if (error.name === "AbortError") {
         $botMsgContainer.html(
           formatThinkResponse(
@@ -677,31 +770,24 @@ $(document).ready(function () {
     }
   });
 
-  // --- Event Listeners ---
   $newChatBtn.on("click", createNewChat);
-
   $chatList.on("click", ".chat-item", function () {
     loadChat($(this).data("id"));
     if (window.innerWidth < 768) {
       $sidebar.addClass("-translate-x-full");
     }
   });
-
   $openSidebar.on("click", () => $sidebar.removeClass("-translate-x-full"));
   $closeSidebar.on("click", () => $sidebar.addClass("-translate-x-full"));
-
   $stopBtn.on("click", function () {
     if (currentAbortController) {
       currentAbortController.abort();
     }
   });
-
-  // --- Multi-line Input Handling ---
   $userInput.on("input", function () {
     this.style.height = "auto";
     this.style.height = this.scrollHeight + "px";
   });
-
   $userInput.on("keydown", function (e) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
