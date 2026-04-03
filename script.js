@@ -340,23 +340,63 @@ $(document).ready(function () {
     return id;
   }
 
-  function renderReferencesUI($container, queries) {
+  function renderReferencesUI($container, webRefs) {
     const refsHtml = `
       <div class="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800/50">
         <div class="flex items-center gap-2 mb-2">
             <span class="text-[0.55rem] font-black uppercase tracking-widest text-zinc-400">Web References</span>
         </div>
         <div class="flex flex-wrap gap-2">
-            ${queries.map(q => `
-                <div class="flex items-center gap-1.5 px-2 py-1 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-md text-[0.6rem] font-bold text-zinc-500">
+            ${webRefs.map((ref, idx) => `
+                <div class="flex items-center gap-2 px-2 py-1 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-md text-[0.6rem] font-bold text-zinc-500">
                     <span class="opacity-50">🔍</span>
-                    <span>${q}</span>
+                    <span>${ref.query || ref}</span>
+                    <button class="view-ref-details ml-1 opacity-40 hover:opacity-100 transition-opacity" data-index="${idx}">
+                        <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 9l-7 7-7-7" /></svg>
+                    </button>
                 </div>
             `).join('')}
         </div>
       </div>
     `;
     $container.html(refsHtml);
+    
+    $container.find('.view-ref-details').on('click', function() {
+        const idx = $(this).data('index');
+        const ref = webRefs[idx];
+        if (ref && ref.results) {
+            showReferenceModal(ref.query, ref.results);
+        }
+    });
+  }
+
+  function showReferenceModal(query, results) {
+    const $modal = $("#reference-modal");
+    const $title = $("#ref-modal-title");
+    const $content = $("#ref-modal-content");
+
+    $title.text(`Search Results: ${query}`);
+    $content.empty();
+
+    if (results.length === 0) {
+        $content.append('<p class="text-xs text-zinc-500">No results found or parsing failed.</p>');
+    } else {
+        results.forEach(res => {
+            const itemHtml = `
+                <div class="p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl space-y-1">
+                    <a href="${res.url}" target="_blank" class="text-xs font-black text-zinc-900 dark:text-zinc-100 hover:underline flex items-center gap-2">
+                        ${res.title}
+                        <svg class="w-3 h-3 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                    </a>
+                    <span class="block text-[0.6rem] text-zinc-400 truncate">${res.url}</span>
+                    <p class="text-[0.65rem] leading-relaxed text-zinc-500 line-clamp-2">${res.description}</p>
+                </div>
+            `;
+            $content.append(itemHtml);
+        });
+    }
+
+    $modal.removeClass("hidden").addClass("flex");
   }
 
   function renderMetricsUI($container, metrics) {
@@ -540,6 +580,14 @@ $(document).ready(function () {
   });
 
   $settingsModal.on("click", function(e) {
+    if (e.target === this) $(this).addClass("hidden").removeClass("flex");
+  });
+
+  const $refModal = $("#reference-modal");
+  const $closeRefModal = $("#close-reference-modal");
+
+  $closeRefModal.on("click", () => $refModal.addClass("hidden").removeClass("flex"));
+  $refModal.on("click", function(e) {
     if (e.target === this) $(this).addClass("hidden").removeClass("flex");
   });
 
@@ -797,69 +845,91 @@ $(document).ready(function () {
               // Also add to visual context chips for user feedback
               addContext("link", url, content);
             } else if (tc.function.name === "web_search") {
-                const query = tc.function.arguments.query;
-                $indicatorZone.html(
-                    `<div class="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 py-2"><div class="spinner-mini"></div><span>Executing tool: web_search("${query}")</span></div>`
-                );
-                const content = await fetchWebSearchContent(query);
-                messages.push({
-                    role: "tool",
-                    content: content
-                });
-                webReferences.push(query);
-            }
-          }
-          
-          // Reset for next pass but keep UI state
-          fullResponse = "";
-          localNativeThinking = "";
-          displayedResponse = "";
-          displayedThinking = "";
-          // Loop again
-        } else {
-          isLooping = false;
-        }
-      }
-
-      cancelAnimationFrame(animationFrameId);
-      $botMsgContainer.html(formatThinkResponse(fullResponse, localNativeThinking, false));
-      if (finalMetrics) {
-        renderMetricsUI($botMsgContainer.siblings(".metrics-zone"), finalMetrics);
-      }
-      if (webReferences.length > 0) {
-        renderReferencesUI($botMsgContainer.siblings(".references-zone"), webReferences);
-      }
-      processMessageContent($botMsgContainer);
-      $chatArea.scrollTop($chatArea[0].scrollHeight);
-      chat.messages.push({ text: fullResponse, isUser: false, metrics: finalMetrics, webReferences: webReferences });
-      saveChats();
-    } catch (error) {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      if (error.name === "AbortError") {
-        $botMsgContainer.html(
-          formatThinkResponse(
-            fullResponse + "\n\n*(Execution halted by user)*",
-            localNativeThinking,
-          ),
-        );
-        processMessageContent($botMsgContainer);
-      } else {
-        $botMsgContainer.html(
-          `<div class="flex flex-col gap-2 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
-            <span class="text-xs font-black uppercase tracking-widest text-red-500">Sync Error</span>
-            <p class="text-sm font-medium text-red-600 dark:text-red-400">${error.message || "Engine Not Responding"}</p>
-          </div>`,
-        );
-      }
-    } finally {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      $userInput.prop("disabled", false).focus();
-      $sendBtn.show().prop("disabled", false).removeClass("opacity-50");
-      $stopBtn.hide();
-      currentAbortController = null;
-    }
-  });
-
+                                const query = tc.function.arguments.query;
+                                $indicatorZone.html(
+                                    `<div class="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 py-2"><div class="spinner-mini"></div><span>Executing tool: web_search("${query}")</span></div>`
+                                );
+                                const content = await fetchWebSearchContent(query);
+                                messages.push({
+                                    role: "tool",
+                                    content: content
+                                });
+                                webReferences.push({ 
+                                    query: query, 
+                                    results: parseJinaSearchResults(content) 
+                                });
+                            }
+                          }
+                
+                          // Reset for next pass but keep UI state
+                          fullResponse = "";
+                          localNativeThinking = "";
+                          displayedResponse = "";
+                          displayedThinking = "";
+                          // Loop again
+                        } else {
+                          isLooping = false;
+                        }
+                      }
+                
+                      cancelAnimationFrame(animationFrameId);
+                      $botMsgContainer.html(formatThinkResponse(fullResponse, localNativeThinking, false));
+                      if (finalMetrics) {
+                        renderMetricsUI($botMsgContainer.siblings(".metrics-zone"), finalMetrics);
+                      }
+                      if (webReferences.length > 0) {
+                        renderReferencesUI($botMsgContainer.siblings(".references-zone"), webReferences);
+                      }
+                      processMessageContent($botMsgContainer);
+                      $chatArea.scrollTop($chatArea[0].scrollHeight);
+                      chat.messages.push({ text: fullResponse, isUser: false, metrics: finalMetrics, webReferences: webReferences });
+                      saveChats();
+                    } catch (error) {
+                      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+                      if (error.name === "AbortError") {
+                        $botMsgContainer.html(
+                          formatThinkResponse(
+                            fullResponse + "\n\n*(Execution halted by user)*",
+                            localNativeThinking,
+                          ),
+                        );
+                        processMessageContent($botMsgContainer);
+                      } else {
+                        $botMsgContainer.html(
+                          `<div class="flex flex-col gap-2 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl">
+                            <span class="text-xs font-black uppercase tracking-widest text-red-500">Sync Error</span>
+                            <p class="text-sm font-medium text-red-600 dark:text-red-400">${error.message || "Engine Not Responding"}</p>
+                          </div>`,
+                        );
+                      }
+                    } finally {
+                      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+                      $userInput.prop("disabled", false).focus();
+                      $sendBtn.show().prop("disabled", false).removeClass("opacity-50");
+                      $stopBtn.hide();
+                      currentAbortController = null;
+                    }
+                  });
+                
+                  function parseJinaSearchResults(text) {
+                    const results = [];
+                    const blocks = text.split(/\[\d+\]\s+Title:/g).filter(b => b.trim());
+                    
+                    blocks.forEach(block => {
+                        const titleMatch = block.match(/^([^\n]+)/);
+                        const urlMatch = block.match(/URL Source:\s+([^\n]+)/);
+                        const descMatch = block.match(/Description:\s+([\s\S]+?)(?=\n\n|\n\[|$)/);
+                        
+                        if (titleMatch && urlMatch) {
+                            results.push({
+                                title: titleMatch[1].trim(),
+                                url: urlMatch[1].trim(),
+                                description: descMatch ? descMatch[1].trim() : ""
+                            });
+                        }
+                    });
+                    return results;
+                  }
   $newChatBtn.on("click", createNewChat);
   $chatList.on("click", ".chat-item", function () {
     loadChat($(this).data("id"));

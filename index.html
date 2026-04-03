@@ -289,6 +289,27 @@
         </div>
     </div>
 
+    <!-- Reference Results Modal -->
+    <div id="reference-modal" class="hidden fixed inset-0 z-[70] flex items-center justify-center bg-zinc-950/20 dark:bg-zinc-950/60 backdrop-blur-sm transition-all animate-in fade-in duration-200">
+        <div class="bg-white dark:bg-zinc-900 w-[95%] max-w-2xl h-[80vh] flex flex-col rounded-2xl p-6 shadow-2xl border border-zinc-200 dark:border-zinc-800 animate-in zoom-in duration-200">
+            <div class="flex items-center justify-between mb-6 flex-shrink-0">
+                <div class="flex flex-col gap-0.5">
+                    <span class="text-[0.55rem] font-black uppercase tracking-widest text-zinc-400">Search Intelligence</span>
+                    <h3 id="ref-modal-title" class="text-sm font-black tracking-tight truncate max-w-[400px]">Search Results</h3>
+                </div>
+                <button id="close-reference-modal" class="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <div id="ref-modal-content" class="flex-1 overflow-y-auto space-y-4 pr-2">
+                <!-- Results injected here -->
+            </div>
+        </div>
+    </div>
+
     <!-- Custom JS -->
     <script src="script.js"></script>
   </body>
