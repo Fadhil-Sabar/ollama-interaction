@@ -31,6 +31,8 @@ $(document).ready(function () {
   const $topPInput = $("#top-p-input");
   const $topKInput = $("#top-k-input");
   const $showMetricsToggle = $("#show-metrics-toggle");
+  const $webSearchToggle = $("#web-search-toggle");
+  const $jinaApiKeyInput = $("#jina-api-key");
 
   const OLLAMA_BASE_URL = "http://localhost:11434";
 
@@ -49,6 +51,9 @@ $(document).ready(function () {
 
   // Config State
   let showMetrics = localStorage.getItem("ollama_show_metrics") === "true";
+  let webSearchEnabled = localStorage.getItem("ollama_web_search") === "true";
+  let jinaApiKey = localStorage.getItem("ollama_jina_key") || "";
+
   let configParams = JSON.parse(localStorage.getItem("ollama_config_params")) || {
     temperature: 0.7,
     num_ctx: 16384,
@@ -153,6 +158,25 @@ $(document).ready(function () {
     }
   }
 
+  async function fetchWebSearchContent(query) {
+    const jinaSearchUrl = `https://s.jina.ai/?q=${encodeURIComponent(query)}`;
+    const headers = {
+      "X-Respond-With": "no-content"
+    };
+    if (jinaApiKey) {
+      headers["Authorization"] = `Bearer ${jinaApiKey}`;
+    }
+
+    try {
+      const response = await fetch(jinaSearchUrl, { headers });
+      if (!response.ok) throw new Error("Web search failed");
+      return await response.text();
+    } catch (error) {
+      console.error("Web search failed:", error);
+      return `Error: Web search for "${query}" failed.`;
+    }
+  }
+
   function addContext(type, name, content) {
     if (activeContext.some((c) => c.name === name)) return;
     activeContext.push({ type, name, content });
@@ -214,7 +238,7 @@ $(document).ready(function () {
     } else {
       $welcomeScreen.hide();
       chat.messages.forEach((msg) => {
-        appendMessageUI(msg.text, msg.isUser, false, msg.metrics);
+        appendMessageUI(msg.text, msg.isUser, false, msg.metrics, msg.webReferences);
       });
     }
     $(".chat-item").removeClass("active");
@@ -276,7 +300,7 @@ $(document).ready(function () {
     renameChat($(this).data("id"));
   });
 
-  function appendMessageUI(text, isUser = false, isHtml = false, metrics = null) {
+  function appendMessageUI(text, isUser = false, isHtml = false, metrics = null, webReferences = null) {
     const id = "msg-" + Date.now() + Math.random().toString(36).substr(2, 9);
     let content = "";
     if (isUser) {
@@ -293,6 +317,7 @@ $(document).ready(function () {
                 <div class="content-box">
                     <div class="prose-custom max-w-none">${content}</div>
                     <div class="status-indicator-zone"></div>
+                    <div class="references-zone"></div>
                     <div class="metrics-zone"></div>
                 </div>
                 ${!isUser ? "" : `<div class="mt-2 text-[10px] text-zinc-400 font-bold uppercase tracking-widest px-1 opacity-60 italic">Personal Transmission</div>`}
@@ -307,9 +332,31 @@ $(document).ready(function () {
       if (metrics) {
         renderMetricsUI($newMsg.find(".metrics-zone"), metrics);
       }
+      if (webReferences && webReferences.length > 0) {
+        renderReferencesUI($newMsg.find(".references-zone"), webReferences);
+      }
     }
     $chatArea.scrollTop($chatArea[0].scrollHeight);
     return id;
+  }
+
+  function renderReferencesUI($container, queries) {
+    const refsHtml = `
+      <div class="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800/50">
+        <div class="flex items-center gap-2 mb-2">
+            <span class="text-[0.55rem] font-black uppercase tracking-widest text-zinc-400">Web References</span>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            ${queries.map(q => `
+                <div class="flex items-center gap-1.5 px-2 py-1 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-md text-[0.6rem] font-bold text-zinc-500">
+                    <span class="opacity-50">🔍</span>
+                    <span>${q}</span>
+                </div>
+            `).join('')}
+        </div>
+      </div>
+    `;
+    $container.html(refsHtml);
   }
 
   function renderMetricsUI($container, metrics) {
@@ -465,6 +512,8 @@ $(document).ready(function () {
     $topPInput.val(configParams.top_p);
     $topKInput.val(configParams.top_k);
     $showMetricsToggle.prop("checked", showMetrics);
+    $webSearchToggle.prop("checked", webSearchEnabled);
+    $jinaApiKeyInput.val(jinaApiKey);
   }
 
   // --- UI Event Handlers ---
@@ -473,6 +522,9 @@ $(document).ready(function () {
 
   $saveSettings.on("click", () => {
     showMetrics = $showMetricsToggle.is(":checked");
+    webSearchEnabled = $webSearchToggle.is(":checked");
+    jinaApiKey = $jinaApiKeyInput.val().trim();
+
     configParams = {
       temperature: parseFloat($tempInput.val()),
       num_ctx: parseInt($ctxInput.val()),
@@ -480,6 +532,8 @@ $(document).ready(function () {
       top_k: parseInt($topKInput.val())
     };
     localStorage.setItem("ollama_show_metrics", showMetrics);
+    localStorage.setItem("ollama_web_search", webSearchEnabled);
+    localStorage.setItem("ollama_jina_key", jinaApiKey);
     localStorage.setItem("ollama_config_params", JSON.stringify(configParams));
     if (currentChatId) loadChat(currentChatId);
     $settingsModal.addClass("hidden").removeClass("flex");
@@ -562,6 +616,26 @@ $(document).ready(function () {
       }
     ];
 
+    if (webSearchEnabled) {
+      tools.push({
+        type: "function",
+        function: {
+          name: "web_search",
+          description: "Search the web to find up-to-date information on a specific topic",
+          parameters: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "The search query to look for"
+              }
+            },
+            required: ["query"]
+          }
+        }
+      });
+    }
+
     const botMsgId = appendMessageUI(
       '<div class="thinking-container"><div class="dot dot-1"></div><div class="dot dot-2"></div><div class="dot dot-3"></div></div>',
       false,
@@ -571,6 +645,8 @@ $(document).ready(function () {
     let fullResponse = "";
     let localNativeThinking = "";
     let finalMetrics = null;
+    let webReferences = []; 
+
     $sendBtn.hide();
     $stopBtn.removeClass("hidden").show();
     currentAbortController = new AbortController();
@@ -705,10 +781,10 @@ $(document).ready(function () {
 
           // Execute tools
           for (const tc of toolCallsInPass) {
+            const $indicatorZone = $botMsgContainer.siblings(".status-indicator-zone");
             if (tc.function.name === "process_link") {
               const url = tc.function.arguments.url;
               // UI indication
-              const $indicatorZone = $botMsgContainer.siblings(".status-indicator-zone");
               $indicatorZone.html(
                 `<div class="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 py-2"><div class="spinner-mini"></div><span>Executing tool: process_link(${url})</span></div>`
               );
@@ -720,6 +796,17 @@ $(document).ready(function () {
               });
               // Also add to visual context chips for user feedback
               addContext("link", url, content);
+            } else if (tc.function.name === "web_search") {
+                const query = tc.function.arguments.query;
+                $indicatorZone.html(
+                    `<div class="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-zinc-400 py-2"><div class="spinner-mini"></div><span>Executing tool: web_search("${query}")</span></div>`
+                );
+                const content = await fetchWebSearchContent(query);
+                messages.push({
+                    role: "tool",
+                    content: content
+                });
+                webReferences.push(query);
             }
           }
           
@@ -739,9 +826,12 @@ $(document).ready(function () {
       if (finalMetrics) {
         renderMetricsUI($botMsgContainer.siblings(".metrics-zone"), finalMetrics);
       }
+      if (webReferences.length > 0) {
+        renderReferencesUI($botMsgContainer.siblings(".references-zone"), webReferences);
+      }
       processMessageContent($botMsgContainer);
       $chatArea.scrollTop($chatArea[0].scrollHeight);
-      chat.messages.push({ text: fullResponse, isUser: false, metrics: finalMetrics });
+      chat.messages.push({ text: fullResponse, isUser: false, metrics: finalMetrics, webReferences: webReferences });
       saveChats();
     } catch (error) {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);

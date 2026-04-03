@@ -259,12 +259,27 @@
                 </div>
 
                 <!-- Metrics Toggle -->
-                <div class="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl">
-                    <div class="flex flex-col gap-0.5">
-                        <span class="text-[0.65rem] font-black uppercase tracking-widest">Performance Metrics</span>
-                        <span class="text-[0.55rem] text-zinc-400 font-bold uppercase tracking-tighter">Display speed & token count</span>
+                <div class="space-y-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+                    <div class="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[0.65rem] font-black uppercase tracking-widest">Performance Metrics</span>
+                            <span class="text-[0.55rem] text-zinc-400 font-bold uppercase tracking-tighter">Display speed & token count</span>
+                        </div>
+                        <input type="checkbox" id="show-metrics-toggle" class="w-4 h-4 accent-zinc-900 dark:accent-zinc-100 cursor-pointer">
                     </div>
-                    <input type="checkbox" id="show-metrics-toggle" class="w-4 h-4 accent-zinc-900 dark:accent-zinc-100 cursor-pointer">
+
+                    <div class="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[0.65rem] font-black uppercase tracking-widest">Web Search</span>
+                            <span class="text-[0.55rem] text-zinc-400 font-bold uppercase tracking-tighter">Enable autonomous web search</span>
+                        </div>
+                        <input type="checkbox" id="web-search-toggle" class="w-4 h-4 accent-zinc-900 dark:accent-zinc-100 cursor-pointer">
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="text-[0.6rem] font-black uppercase tracking-widest opacity-40">Jina AI API Key</label>
+                        <input type="password" id="jina-api-key" placeholder="jina_..." class="w-full bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3 text-xs font-bold outline-none transition-all">
+                    </div>
                 </div>
 
                 <button id="save-settings" class="w-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-950 text-[0.65rem] font-black uppercase tracking-widest py-4 rounded-xl hover:opacity-90 active:scale-95 transition-all">

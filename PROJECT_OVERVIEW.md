@@ -21,7 +21,9 @@ This project provides a clean, "Zen" style interface for Ollama. It focuses on p
 
 ### 2. Advanced Context Management (RAG) & Tools
 - **Local File RAG**: Users can attach `.txt`, `.md`, or code files. Content is read client-side and injected into the prompt.
-- **Link Analysis (Tool Calling)**: Integrated with Ollama's `tools` API. The model can autonomously decide to call `process_link` via Jina Reader (`r.jina.ai`) to fetch live web content when relevant to the user's query.
+- **Link Analysis (Tool Calling)**: Integrated with Ollama's `tools` API. The model can autonomously decide to call `process_link` via Jina Reader (`r.jina.ai`) to fetch live web content.
+- **Autonomous Web Search**: Model can call `web_search` tool using Jina AI Search API (`s.jina.ai`) for real-time information. Supports API Key configuration in settings.
+- **Reference Tracking**: Each response displays a list of search queries used as references.
 - **Pinned Context**: Attached files/links stay active (pinned) for multiple questions until manually removed.
 
 ### 3. Smart Memory & Tool Loop
